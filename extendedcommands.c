@@ -39,6 +39,7 @@
 #include "mtdutils/mtdutils.h"
 #include "mmcutils/mmcutils.h"
 #include "make_ext4fs.h"
+#include "bmlutils/bmlutils.h"
 
 #include EXPAND(BUILD_TOP/external/yaffs2/yaffs2/utils/mkyaffs2image.h)
 #include EXPAND(BUILD_TOP/external/yaffs2/yaffs2/utils/unyaffs.h)
@@ -456,6 +457,18 @@ int format_device(const char *device, const char *path, const char *fs_type) {
         return -1;
     }
 
+    if (strcmp(fs_type, "rfs") == 0) {
+        if (ensure_path_unmounted(path) != 0) {
+            LOGE("format_volume failed to unmount \"%s\"\n", v->mount_point);
+            return -1;
+        }
+        if (0 != format_rfs_device(device, path)) {
+            LOGE("format_volume: format_rfs_device failed on %s\n", device);
+            return -1;
+        }
+        return 0;
+    }
+
     if (strcmp(v->mount_point, path) != 0) {
         return format_unknown_device(v->device, path, NULL);
     }
@@ -608,10 +621,8 @@ int is_safe_to_format(char* name)
     char* partition;
     //property_get("ro.cwm.forbid_format", str, "/misc,/radio,/bootloader,/recovery,/efs");
 
-    //hardcoded change for the moment (defy) only allow to real format cache (ext3)
-    property_get("ro.cwm.forbid_format", str, "/misc,/boot,/pds,/recovery,/system,/data,/devtree,/cdrom");
-
-    //LOGI("ro.cwm.forbid_format=%s\n", str);
+    //hardcoded change for the moment (defy) only allow to real format cache and sd-ext (ext3)
+    property_get("ro.cwm.forbid_format", str, "/misc,/boot,/pds,/recovery,/system,/data,/devtree,/logo,/cdrom");
 
     partition = strtok(str, ", ");
     while (partition != NULL) {
@@ -787,6 +798,7 @@ void show_nandroid_advanced_backup_menu(const char* backup_path)
         "Backup devtree",
         "Backup recovery",
         "Backup cache",
+        "Backup logo",
         "Backup sd-ext",
         "Backup pds",
         "Backup wimax",
@@ -796,8 +808,8 @@ void show_nandroid_advanced_backup_menu(const char* backup_path)
 
     char tmp[PATH_MAX];
     if (0 != get_partition_device("wimax", tmp)) {
-        // disable pds backup option
-        list[8] = NULL;
+        // disable wimax backup option
+        list[9] = NULL;
     }
 
     int chosen_item = get_menu_selection(headers, list, 0, 0);
@@ -828,14 +840,18 @@ void show_nandroid_advanced_backup_menu(const char* backup_path)
             show_nandroid_advanced_backup_menu(backup_path);
             break;
         case 6:
-            nandroid_backup(backup_path, BAK_SDEXT);
+            nandroid_backup(backup_path, BAK_LOGO);
             show_nandroid_advanced_backup_menu(backup_path);
             break;
         case 7:
-            nandroid_backup(backup_path, BAK_PDS);
+            nandroid_backup(backup_path, BAK_SDEXT);
             show_nandroid_advanced_backup_menu(backup_path);
             break;
         case 8:
+            nandroid_backup(backup_path, BAK_PDS);
+            show_nandroid_advanced_backup_menu(backup_path);
+            break;
+        case 9:
             nandroid_backup(backup_path, BAK_WIMAX);
             show_nandroid_advanced_backup_menu(backup_path);
             break;
@@ -894,6 +910,7 @@ void show_nandroid_advanced_restore_menu(const char* path)
         "Restore devtree",
         "Restore recovery",
         "Restore cache",
+        "Restore logo",
         "Restore sd-ext",
         "Restore pds",
         "Restore wimax",
@@ -902,7 +919,7 @@ void show_nandroid_advanced_restore_menu(const char* path)
 
     if (0 != get_partition_device("wimax", tmp)) {
         // disable wimax restore option
-        list[8] = NULL;
+        list[9] = NULL;
     }
 
     char* name;
@@ -911,7 +928,7 @@ void show_nandroid_advanced_restore_menu(const char* path)
     static char* unavailable = "";
 
     ui_print("%s:\n", basename(dir));
-    for (p=7; p >= 0; p--) {
+    for (p=8; p >= 0; p--) {
         if (list[p] != NULL && strlen(list[p])) {
             name = list[p] + strlen("Restore ");
             sprintf(tmp, "%s/%s.img", dir, name);
@@ -957,14 +974,18 @@ void show_nandroid_advanced_restore_menu(const char* path)
                 nandroid_restore(dir, BAK_CACHE);
             break;
         case 6:
+            if (confirm_selection(confirm_restore, "Yes - Restore logo"))
+                nandroid_restore(dir, BAK_LOGO);
+            break;
+        case 7:
             if (confirm_selection(confirm_restore, "Yes - Restore sd-ext"))
                 nandroid_restore(dir, BAK_SDEXT);
             break;
-        case 7:
+        case 8:
             if (confirm_selection(confirm_restore, "Yes - Restore pds"))
                 nandroid_restore(dir, BAK_PDS);
             break;
-        case 8:
+        case 9:
             if (confirm_selection(confirm_restore, "Yes - Restore wimax"))
                 nandroid_restore(dir, BAK_WIMAX);
             break;
@@ -1322,6 +1343,7 @@ void create_fstab()
     write_fstab_root("/emmc", file);
     write_fstab_root("/system", file);
     write_fstab_root("/devtree", file);
+    write_fstab_root("/logo", file);
     write_fstab_root("/recovery", file);
     write_fstab_root("/sdcard", file);
     write_fstab_root("/sd-ext", file);
